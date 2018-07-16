@@ -1,0 +1,8 @@
+<aura:component >
+    <aura:attribute name="iframeURL" type="String"/>    
+    <aura:attribute name="params" type="Object"/>
+    <aura:handler name="change" value="{!v.params}" action="{!c.makeRequest}"/>
+    <aura:handler name="init" value="{!this}" action="{!c.doInit}" />
+
+    <iframe aura:id="restQueryIframe" width="0" height="0" style="display: none;" src="{!v.iframeURL}" ></iframe>
+</aura:component>

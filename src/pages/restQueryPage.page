@@ -1,0 +1,184 @@
+<apex:page standardStylesheets="false" showHeader="false" sidebar="false" controller="QueryAppController">
+
+
+    
+<script src="../../soap/ajax/43.0/connection.js" type="text/javascript" />
+<script type="text/javascript" src="https://code.jquery.com/jquery-3.3.1.min.js"/>
+    
+
+<script type="text/javascript">
+	sforce.connection.sessionId = "{!$Api.Session_ID}"; 
+    Visualforce.remoting.timeout = 120000; 
+	
+    //Set AJAX timeout to 15 mins (conversion to MS)	
+    var AJAXtimeout = 15 * (60 * 1000);         
+    
+    //=====================================
+    // patching one function in the connection.js resource, so we don't get 
+    // Refused to set unsafe header "User-Agent" errror
+    //=====================================
+    
+    sforce.Transport = function(url) {
+        this.url = url;
+        this.connection = null;
+        
+        this.newConnection = function() {
+            try {
+                this.connection = new ActiveXObject('Msxml2.XMLHTTP');
+            } catch(e) {
+                try {
+                    this.connection = new ActiveXObject('Microsoft.XMLHTTP');
+                } catch(e) {
+                    this.connection = new XMLHttpRequest();
+                }
+            }
+            
+            return this.connection;
+        };
+        
+        this.send = function (envelope, callback, async, timeout) {
+            this.newConnection();
+            if (async) {
+                this.connection.onreadystatechange = this.httpConnectionCallback;
+            }
+            var holder = new sforce.internal.ConnectionHolder(this.connection, callback);
+            sforce.internal._connections.push(holder);
+            this.connection.open("POST", this.url, async);
+            this.connection.setRequestHeader("Content-Type", "text/xml; charset=UTF-8");
+            this.connection.setRequestHeader("SOAPAction", "\"\"");
+            this.connection.setRequestHeader("Accept", "text/xml");
+            //this.connection.setRequestHeader("User-Agent", "SFAJAX 1.0"); //here is the one line we are patching
+            this.connection.send(envelope);
+            if (async && typeof(timeout) !== "undefined") {
+                this.setTimeoutOn(holder, timeout);
+            }
+            if (!async) {
+                this.httpConnectionCallback();
+            }
+        };
+        
+        this.setTimeoutOn = function (holder, timeout) {
+            function abortConnection() {
+                if (holder.connection.readyState !== 4) {
+                    holder.timedout = true;
+                    holder.connection.abort();
+                }
+            }
+            setTimeout(abortConnection, timeout);
+        };
+        
+        this.httpConnectionCallback = function () {
+            
+            for (var i = 0; i < sforce.internal._connections.length; i++) {
+                var holder = sforce.internal._connections[i];
+                if (holder !== null) {
+                    if (holder.timedout) {
+                        sforce.internal._connections[i] = null;
+                        sforce.internal._connections.slice(i,1);
+                        holder.callback.httpCallback("Remote invocation timed out", false);
+                    } else  if (holder.connection.readyState == 4) {
+                        sforce.internal._connections[i] = null;
+                        sforce.internal._connections.slice(i,1);
+                        var success = holder.connection.status == 200;
+                        if (sforce.debug.trace) {
+                            sforce.debug.log("Response : status - " + holder.connection.status);
+                            sforce.debug.logXml(holder.connection.responseText);
+                        }
+                        if (sforce.debug.apexTrace) {
+                            sforce.debug.logApex(holder.connection.responseText);
+                        }
+                        if (holder.connection.responseXML && holder.connection.responseXML.documentElement) {
+                            holder.callback.httpCallback(holder.connection.responseXML.documentElement, success);
+                        } else {
+                            holder.callback.httpCallback("Remote invocation failed, due to: " + holder.connection.responseText +
+                                                         " status code: ", holder.connection.status);
+                        }
+                    }
+                }
+            }
+        };
+    };
+    
+    
+    //END PATCH =======================================
+
+    window.addEventListener("message", messageHandler, false);
+    window.parent.postMessage({"type": "ready"}, "*");
+    
+
+    
+    function messageHandler(event) {
+        console.log('messageHandler event: ', event);
+        console.log(event);
+            
+        var data = event.data;
+        var type = data.type;
+
+        if (type === "doAJAXtoolkitQuery") {
+  			console.log('doAJAXtoolkitQuery...');
+      
+            var result = sforce.connection.query("SELECT Id, Close__c, Time__c FROM Bitcoin_Price__c ORDER BY Time__c");
+            //var result = sforce.connection.query("SELECT Id, Close__c, Time__c FROM Bitcoin_Price_Big__b");
+            //console.log(result);
+
+            var it = new sforce.QueryResultIterator(result);
+            
+            var records = [];
+            while (it.hasNext()) {
+                records.push(it.next());
+            }            
+
+            window.parent.postMessage({"type": "doAJAXtoolkitQuery", "payload": JSON.stringify(records)}, "*");               
+        }
+        
+        
+        
+        if (type === "doQueryVF") {
+  			console.log('doQueryVF...');            
+            Visualforce.remoting.Manager.invokeAction(
+                '{!$RemoteAction.QueryAppController.queryVFremote}',
+                function(result, event){
+                    //console.log(result);
+                    window.parent.postMessage({"type": "doQueryVF", "payload": JSON.stringify(result)}, "*");                       
+                },
+                {buffer: false}
+            );  
+        }    
+        
+        if (type === "doAsyncSOQL") {   
+  			console.log('doAsyncSOQL...');                
+            Visualforce.remoting.Manager.invokeAction(
+                '{!$RemoteAction.QueryAppController.asyncSOQLquery}',
+                function(result, event){
+                    console.log(result);
+                    window.parent.postMessage({"type": "doAsyncSOQL", "payload": result}, "*");                       
+                },
+                {buffer: false}
+            );      
+        }
+
+        if (type === "doListAsyncSOQLqueries") {   
+  			console.log('doListAsyncSOQLqueries...');                
+            Visualforce.remoting.Manager.invokeAction(
+                '{!$RemoteAction.QueryAppController.asyncSOQLqueries}',
+                function(result, event){
+                    console.log(result);
+                    window.parent.postMessage({"type": "doListAsyncSOQLqueries", "payload": decodeURIComponent(result)}, "*");                       
+                },
+                {buffer: false}
+            );      
+        }        
+              
+        
+    }    
+
+    
+    
+
+    
+    
+    
+    
+    
+    </script> 
+</apex:page>
